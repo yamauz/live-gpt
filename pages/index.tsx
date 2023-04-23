@@ -1,11 +1,125 @@
-import Head from 'next/head'
-import Image from 'next/image'
-import { Inter } from 'next/font/google'
-import styles from '@/styles/Home.module.css'
+import {
+  Avatar,
+  Box,
+  Button,
+  Center,
+  Container,
+  Flex,
+  IconButton,
+  Text,
+  Textarea,
+  VStack,
+  Image,
+  Heading,
+} from "@chakra-ui/react";
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { Harker } from "hark";
+import Head from "next/head";
+import { Configuration, OpenAIApi } from "openai";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { RecordRTCPromisesHandler } from "recordrtc";
+import { BsFillMicFill, BsFillMicMuteFill } from "react-icons/bs";
+import { EventEmitter } from "events";
+const eventEmitter = new EventEmitter();
 
-const inter = Inter({ subsets: ['latin'] })
+const playAudioFromFile = async (file: File) => {
+  const audio = new Audio();
+  audio.src = URL.createObjectURL(file);
+  audio.play();
+};
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const getSilenceRemovalAudioFile = async (blob: Blob) => {
+  const buffer = await blob.arrayBuffer();
+  const { createFFmpeg } = await import("@ffmpeg/ffmpeg");
+  const ffmpeg = createFFmpeg({
+    mainName: "main",
+    corePath: "https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js",
+    // log: true,
+  });
+  await ffmpeg.load();
+  ffmpeg.FS("writeFile", "in.wav", new Uint8Array(buffer));
+  await ffmpeg.run(
+    "-i", // Input
+    "in.wav",
+    "-acodec", // Audio codec
+    "libmp3lame",
+    "-b:a", // Audio bitrate
+    "96k",
+    "-ar", // Audio sample rate
+    "44100",
+    "-af", // Audio filter = remove silence from start to end with 2 seconds in between
+    "silenceremove=start_periods=0:stop_periods=-1:start_threshold=-50dB:stop_threshold=-60dB:start_silence=1.5:stop_silence=2",
+    "out.mp3" // Output
+  );
+  const out = ffmpeg.FS("readFile", "out.mp3");
+
+  if (out.length <= 225) {
+    ffmpeg.exit();
+    console.log("too short");
+    return;
+  }
+  const outBlob = new Blob([out.buffer], { type: "audio/mpeg" });
+  return new File([outBlob], "speech.mp3", { type: "audio/mpeg" });
+};
+
+const getTextFromWhisper = async (file: File) => {
+  const configuration = new Configuration({
+    apiKey: process.env.OPENAI_API_KEY,
+    formDataCtor: class CustomFormData extends FormData {
+      getHeaders() {
+        return {};
+      }
+    },
+  });
+  const openai = new OpenAIApi(configuration);
+
+  const transcription = await openai.createTranscription(file, "whisper-1");
+  return transcription.data.text;
+};
+
+const importRecordRtc = async () => {
+  const {
+    default: {
+      RecordRTCPromisesHandler,
+      StereoAudioRecorder,
+      invokeSaveAsDialog,
+    },
+  } = await import("recordrtc");
+  return { RecordRTCPromisesHandler, StereoAudioRecorder, invokeSaveAsDialog };
+};
 
 export default function Home() {
+  const recorder = useRef<RecordRTCPromisesHandler>();
+  const harker = useRef<Harker>();
+  const file = useRef<File>();
+
+  const [textList, setTextList] = useState<string[]>([
+    "そして輝く〇〇〇〇ソウル！〇〇〇〇に入る歌詞は？",
+    "嗅いだことのない香り 聞いたことのないウィスパー…",
+    "B'zのLIVE-GPTにようこそぉぉぉぉぉ！",
+  ]);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  // const [isProcessingVoice, setIsProcessingVoice] = useState(false);
+  const [gptAnswer, setGptAnswer] = useState<string>("");
+
+  const handleStoppedSpeaking = async () => {
+    if (!recorder.current) return;
+    await recorder.current.stopRecording();
+    file.current = await getSilenceRemovalAudioFile(
+      await recorder.current.getBlob()
+    );
+    if (!file.current) return;
+    const whisperText = await getTextFromWhisper(file.current);
+    setTextList((prev) => [whisperText, ...prev]);
+
+    // await playAudioFromFile(file.current);
+    file.current = undefined;
+    await recorder.current.reset();
+    await recorder.current.startRecording();
+    console.log("restart");
+  };
   return (
     <>
       <Head>
@@ -14,101 +128,157 @@ export default function Home() {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
-      <main className={styles.main}>
-        <div className={styles.description}>
-          <p>
-            Get started by editing&nbsp;
-            <code className={styles.code}>pages/index.tsx</code>
-          </p>
-          <div>
-            <a
-              href="https://vercel.com?utm_source=create-next-app&utm_medium=default-template&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              By{' '}
-              <Image
-                src="/vercel.svg"
-                alt="Vercel Logo"
-                className={styles.vercelLogo}
-                width={100}
-                height={24}
-                priority
-              />
-            </a>
-          </div>
-        </div>
-
-        <div className={styles.center}>
-          <Image
-            className={styles.logo}
-            src="/next.svg"
-            alt="Next.js Logo"
-            width={180}
-            height={37}
-            priority
-          />
-        </div>
-
-        <div className={styles.grid}>
-          <a
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=default-template&utm_campaign=create-next-app"
-            className={styles.card}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <h2 className={inter.className}>
-              Docs <span>-&gt;</span>
-            </h2>
-            <p className={inter.className}>
-              Find in-depth information about Next.js features and&nbsp;API.
-            </p>
-          </a>
-
-          <a
-            href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=default-template&utm_campaign=create-next-app"
-            className={styles.card}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <h2 className={inter.className}>
-              Learn <span>-&gt;</span>
-            </h2>
-            <p className={inter.className}>
-              Learn about Next.js in an interactive course with&nbsp;quizzes!
-            </p>
-          </a>
-
-          <a
-            href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=default-template&utm_campaign=create-next-app"
-            className={styles.card}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <h2 className={inter.className}>
-              Templates <span>-&gt;</span>
-            </h2>
-            <p className={inter.className}>
-              Discover and deploy boilerplate example Next.js&nbsp;projects.
-            </p>
-          </a>
-
-          <a
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=default-template&utm_campaign=create-next-app"
-            className={styles.card}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <h2 className={inter.className}>
-              Deploy <span>-&gt;</span>
-            </h2>
-            <p className={inter.className}>
-              Instantly deploy your Next.js site to a shareable URL
-              with&nbsp;Vercel.
-            </p>
-          </a>
-        </div>
+      <main>
+        <VStack color="gray.400">
+          <Container maxW="1200px" h="100vh">
+            <Center p="5" w="full" mb="10">
+              <Flex flexDir="column" gap="5">
+                <Center>
+                  <Heading as="h1" size="3xl">
+                    LIVE-GPT
+                  </Heading>
+                </Center>
+                <Center>
+                  <Text>Next.js Whisper ChatGPT example</Text>
+                </Center>
+                <Center>
+                  <IconButton
+                    size="lg"
+                    rounded="full"
+                    aria-label="Record voice"
+                    icon={
+                      isSpeaking ? <BsFillMicMuteFill /> : <BsFillMicFill />
+                    }
+                    colorScheme={isSpeaking ? "red" : "blue"}
+                    onClick={async () => {
+                      if (isSpeaking) {
+                        if (!recorder.current) return;
+                        await recorder.current.stopRecording();
+                        await recorder.current.destroy();
+                        recorder.current = undefined;
+                        setIsSpeaking(false);
+                      } else {
+                        const stream =
+                          await navigator.mediaDevices.getUserMedia({
+                            audio: true,
+                          });
+                        const { RecordRTCPromisesHandler } =
+                          await importRecordRtc();
+                        recorder.current = new RecordRTCPromisesHandler(
+                          stream,
+                          {
+                            type: "video",
+                            mimeType: "audio/wav",
+                            numberOfAudioChannels: 1, // mono
+                            sampleRate: 44100, // Sample rate = 44.1khz
+                            disableLogs: true,
+                          }
+                        );
+                        const { default: hark } = await import("hark");
+                        harker.current = hark(stream, {
+                          interval: 30,
+                          // threshold: -70,
+                          play: false,
+                        });
+                        recorder.current.startRecording();
+                        harker.current.on(
+                          "stopped_speaking",
+                          handleStoppedSpeaking
+                        );
+                        setIsSpeaking(true);
+                      }
+                    }}
+                  />
+                </Center>
+              </Flex>
+            </Center>
+            <Flex>
+              <Flex w="600px" flexDir="column">
+                <Flex flexDirection="column" gap="4">
+                  {textList.map((text, index) => {
+                    return (
+                      <Flex key={index} gap="5">
+                        <Avatar name="User" src="./avatar.png" />
+                        <Box w="full" pos="relative">
+                          <Box
+                            pos="absolute"
+                            right="2"
+                            top="2"
+                            cursor="pointer"
+                            userSelect="none"
+                            zIndex="10"
+                            rounded="full"
+                            onClick={async () => {
+                              setGptAnswer("");
+                              const configuration = new Configuration({
+                                apiKey: process.env.OPENAI_API_KEY,
+                              });
+                              const openai = new OpenAIApi(configuration);
+                              const completion = await openai.createCompletion({
+                                model: "text-davinci-003",
+                                prompt: text,
+                                temperature: 0.3,
+                                max_tokens: 500,
+                                top_p: 1.0,
+                                frequency_penalty: 0.0,
+                                presence_penalty: 0.0,
+                              });
+                              console.log(completion);
+                              if (completion.data.choices[0].text) {
+                                setGptAnswer(
+                                  completion.data.choices[0].text.trim()
+                                );
+                              }
+                            }}
+                          >
+                            <Image alt="svgImg" src="./chatgpt.svg" />
+                          </Box>
+                          <Textarea
+                            borderWidth="1px"
+                            borderColor={"gray.300"}
+                            w="full"
+                            value={text}
+                            onChange={(event) => {
+                              const newTextList = [...textList];
+                              newTextList[index] = event.target.value;
+                              setTextList(newTextList);
+                            }}
+                            colorScheme="teal"
+                            resize="none"
+                          />
+                        </Box>
+                      </Flex>
+                    );
+                  })}
+                </Flex>
+              </Flex>
+              <Flex px="10" w="600px">
+                <Flex gap="5" w="full" pb="10">
+                  {gptAnswer && (
+                    <>
+                      <Avatar name="User" src="./chatgpt.svg" />
+                      <Box w="full">
+                        <Textarea
+                          borderWidth="1px"
+                          borderColor={"gray.300"}
+                          w="full"
+                          h="500px"
+                          value={gptAnswer}
+                          onChange={(event) => {
+                            setGptAnswer(event.target.value);
+                          }}
+                          colorScheme="teal"
+                          resize="none"
+                        />
+                      </Box>
+                    </>
+                  )}
+                </Flex>
+              </Flex>
+            </Flex>
+          </Container>
+        </VStack>
       </main>
     </>
-  )
+  );
 }
