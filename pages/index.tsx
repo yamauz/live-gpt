@@ -20,6 +20,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { RecordRTCPromisesHandler } from "recordrtc";
 import { BsFillMicFill, BsFillMicMuteFill } from "react-icons/bs";
 import { EventEmitter } from "events";
+import { CircleLoader } from "react-spinners";
 const eventEmitter = new EventEmitter();
 
 const playAudioFromFile = async (file: File) => {
@@ -98,11 +99,12 @@ export default function Home() {
   const [textList, setTextList] = useState<string[]>([
     "そして輝く〇〇〇〇ソウル！〇〇〇〇に入る歌詞は？",
     "嗅いだことのない香り 聞いたことのないウィスパー…",
-    "B'zのLIVE-GPTにようこそぉぉぉぉぉ！",
+    "LIVE-GPTにようこそぉぉぉぉぉ！",
   ]);
   const [isSpeaking, setIsSpeaking] = useState(false);
   // const [isProcessingVoice, setIsProcessingVoice] = useState(false);
   const [gptAnswer, setGptAnswer] = useState<string>("");
+  const [isGptLoading, setIsGptLoading] = useState(false);
 
   const handleStoppedSpeaking = async () => {
     if (!recorder.current) return;
@@ -210,6 +212,7 @@ export default function Home() {
                             rounded="full"
                             onClick={async () => {
                               setGptAnswer("");
+                              setIsGptLoading(true);
                               const configuration = new Configuration({
                                 apiKey: process.env.OPENAI_API_KEY,
                               });
@@ -223,12 +226,12 @@ export default function Home() {
                                 frequency_penalty: 0.0,
                                 presence_penalty: 0.0,
                               });
-                              console.log(completion);
                               if (completion.data.choices[0].text) {
                                 setGptAnswer(
                                   completion.data.choices[0].text.trim()
                                 );
                               }
+                              setIsGptLoading(false);
                             }}
                           >
                             <Image alt="svgImg" src="./chatgpt.svg" />
@@ -254,6 +257,15 @@ export default function Home() {
               </Flex>
               <Flex px="10" w="600px">
                 <Flex gap="5" w="full" pb="10">
+                  {isGptLoading && (
+                    <Center w="full">
+                      <CircleLoader
+                        color="#00BFFF"
+                        loading={isGptLoading}
+                        size={150}
+                      />
+                    </Center>
+                  )}
                   {gptAnswer && (
                     <>
                       <Avatar name="User" src="./chatgpt.svg" />
